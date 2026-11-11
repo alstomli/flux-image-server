@@ -1,0 +1,8 @@
+# Source-only reference-editing candidate. Dependencies are unchanged from this
+# publicly pullable, GPU-verified deployed runtime (source commit e8f51cd).
+# Keep Dockerfile as the independent full build; do not use this path for changes
+# to dependencies or source deletions, because COPY merges the application tree.
+FROM ghcr.io/alstomli/flux-image-server@sha256:eb90674d975df24ab14732f49a86bb59777d4b5c3e1f13273eb9c980916d0585
+WORKDIR /app
+COPY flux_image_server/ /app/flux_image_server/
+COPY scripts/ /app/scripts/

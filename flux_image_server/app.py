@@ -5,12 +5,14 @@ import re
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from .config import Config, MODEL_ID, MODEL_REVISION
 from .errors import ServiceError
 from .locking import ProcessLock
 from .metrics import Metrics
 from .runner import FluxRunner
+from .reference import MAX_REFERENCE_BYTES, MAX_EDIT_REQUEST_BYTES, validate_reference
 from .store import Store, envelope
 from .worker import Worker
 
@@ -81,10 +83,15 @@ def create_app(config: Config | None = None, *, runner=None, start_worker=True):
     @app.get("/readyz")
     def ready():
         available = worker.accepting()
+        capture = getattr(worker.runner, "memory_snapshot", None)
+        snapshot = capture() if callable(capture) else {
+            **getattr(worker.runner, "memory_context", {}), "gpus": getattr(worker.runner, "memory", {})}
         return JSONResponse({"ready": available, "model": MODEL_ID, "revision": MODEL_REVISION,
                              "dtype": "bfloat16", "offloading": False,
                              "placement": getattr(worker.runner, "placement", {}),
-                             "memory": getattr(worker.runner, "memory", {}),
+                             "memory": snapshot.get("gpus", {}),
+                             "memoryContext": {key: value for key, value in snapshot.items() if key != "gpus"},
+                             "warmupMemory": getattr(worker.runner, "warmup_memory", {}),
                              "phase": getattr(worker.runner, "phase", "load"), "errorClass": worker.error_class,
                              "state": "failed" if worker.loading_error else "ready" if available else "loading_or_unavailable"},
                             200 if available else 503)
@@ -95,8 +102,13 @@ def create_app(config: Config | None = None, *, runner=None, start_worker=True):
                 "limits": {"width": config.width, "height": config.height, "steps": config.steps,
                            "guidanceScale": config.guidance, "maxPromptLength": config.max_prompt_length,
                            "maxUnfinishedPerAccount": 1, "dailyStarts": config.daily_starts,
-                           "queueSize": 0, "resultTtlSeconds": config.ttl_seconds},
+                           "queueSize": 0, "resultTtlSeconds": config.ttl_seconds,
+                           "maxReferenceBytes": MAX_REFERENCE_BYTES, "maxReferenceImages": 1},
                 "persistence": "process", "dailyQuotaPersistence": "process",
+                "referenceEditing": worker.ready,
+                "imageEditing": {"enabled": worker.ready, "version": 1, "maxReferenceImages": 1,
+                                 "mimeTypes": ["image/png", "image/jpeg"], "width": 1024, "height": 1024,
+                                 "maxImageBytes": MAX_REFERENCE_BYTES, "maxRequestBytes": MAX_EDIT_REQUEST_BYTES},
                 "states": ["generating", "completed", "failed", "cancelled", "expired"]}
 
     @app.post("/v1/image-jobs", status_code=202)
@@ -109,12 +121,12 @@ def create_app(config: Config | None = None, *, runner=None, start_worker=True):
             raise ServiceError("invalid_request", "Send a JSON image request.")
         body = bytearray()
         async for chunk in request.stream():
-            if len(body) + len(chunk) > MAX_REQUEST_BYTES:
+            if len(body) + len(chunk) > MAX_EDIT_REQUEST_BYTES:
                 raise ServiceError("invalid_request", "The image request is too large.", 413)
             body.extend(chunk)
         try:
             data = json.loads(body.decode("utf-8"))
-            if not isinstance(data, dict) or set(data) != {"prompt"} or not isinstance(data["prompt"], str):
+            if not isinstance(data, dict) or not {"prompt"} <= set(data) <= {"prompt", "referenceImage"} or not isinstance(data["prompt"], str):
                 raise ValueError()
             prompt = data["prompt"].strip()
             length = len(prompt.encode("utf-16-le")) // 2
@@ -122,8 +134,11 @@ def create_app(config: Config | None = None, *, runner=None, start_worker=True):
                 raise ValueError()
         except (ValueError, UnicodeError):
             raise ServiceError("invalid_request", "Enter an image prompt of 1–2,000 characters.")
+        if "referenceImage" not in data and len(body) > MAX_REQUEST_BYTES:
+            raise ServiceError("invalid_request", "The image request is too large.", 413)
+        reference = await run_in_threadpool(validate_reference, data["referenceImage"]) if "referenceImage" in data else None
         try:
-            job = store.submit(principal, key, prompt, worker.accepting())
+            job = store.submit(principal, key, prompt, worker.accepting(), reference=reference)
         except ServiceError as error:
             metrics.rejected.labels(error.code).inc()
             raise

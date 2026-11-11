@@ -26,15 +26,19 @@ class Store:
     def quota(self, owner):
         return self.daily.get((owner, self.day()), 0)
 
-    def submit(self, owner: str, key: str, prompt: str, ready: bool):
+    def submit(self, owner: str, key: str, prompt: str, ready: bool, *, reference=None):
         now = self.clock()
-        fingerprint = sha256(prompt.encode("utf-8")).hexdigest()
+        # Length-delimited prompt plus decoded-image hash makes retries depend on
+        # the actual reference bytes, not data-URL spelling or a source image ID.
+        prompt_bytes = prompt.encode("utf-8")
+        fingerprint = sha256(len(prompt_bytes).to_bytes(8, "big") + prompt_bytes +
+                             (b"\1" + bytes.fromhex(reference.fingerprint) if reference else b"\0")).hexdigest()
         with self.lock:
             existing_id = self.keys.get((owner, key))
             if existing_id:
                 existing = self.jobs[existing_id]
                 if existing["fingerprint"] != fingerprint:
-                    raise ServiceError("idempotency_conflict", "This request key was already used for another prompt.", 409)
+                    raise ServiceError("idempotency_conflict", "This request key was already used for another prompt or reference image.", 409)
                 self.check_expired(existing)
                 return dict(existing)
             if not ready:
@@ -51,6 +55,7 @@ class Store:
                    "prompt": prompt, "status": "generating", "created": now, "started": None,
                    "finished": None, "expires": None, "cancel": False, "step": 0,
                    "error_code": None, "seed": uuid.uuid4().int % (2**63 - 1)}
+            job.update(reference=reference, kind="edit" if reference else "text")
             self.jobs[identifier] = job
             self.keys[(owner, key)] = identifier
             self.daily[(owner, self.day())] = self.quota(owner) + 1
@@ -92,7 +97,7 @@ class Store:
             job["step"] = step
             return bool(job["cancel"])
 
-    def finish(self, identifier, status, error=None):
+    def finish(self, identifier, status, error=None, *, generation_memory=None):
         with self.lock:
             job = self.jobs[identifier]
             if job["status"] != "generating":
@@ -100,7 +105,9 @@ class Store:
             # A validated atomically persisted PNG wins over a late cancellation.
             now = self.clock()
             job.update(status=status, finished=now, expires=now + self.config.ttl_seconds,
-                       error_code=error, prompt=None)
+                       error_code=error, prompt=None, reference=None)
+            if generation_memory is not None:
+                job["generation_memory"] = generation_memory
             if self.on_terminal:
                 self.on_terminal(status, error, max(0, now - job["created"]))
         if status != "completed":
@@ -146,10 +153,12 @@ class Store:
 def envelope(job, config: Config):
     def date(value):
         return datetime.fromtimestamp(value, timezone.utc).isoformat().replace("+00:00", "Z")
-    result = {"jobId": job["id"], "status": job["status"], "createdAt": date(job["created"]),
+    result = {"jobId": job["id"], "status": job["status"], "kind": job["kind"], "createdAt": date(job["created"]),
               "progress": {"step": job["step"], "totalSteps": config.steps}}
     if job["expires"] is not None:
         result["expiresAt"] = date(job["expires"])
+    if job.get("generation_memory") is not None:
+        result["generationMemory"] = job["generation_memory"]
     if job["cancel"] and job["status"] == "generating":
         result["cancellationRequested"] = True
     if job["status"] == "completed":

@@ -1,7 +1,7 @@
 name: Publish deployment candidate
 on:
   push:
-    branches: [feat/flux2-image-service]
+    branches: [feat/flux2-image-service, feat/reference-image-editing]
 permissions:
   contents: read
   packages: write
@@ -38,6 +38,7 @@ jobs:
         id: build
         with:
           context: .
+          file: ${{ github.ref_name == 'feat/reference-image-editing' && 'Dockerfile.incremental' || 'Dockerfile' }}
           platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}

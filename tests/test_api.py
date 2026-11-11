@@ -71,7 +71,7 @@ def test_schema_rejections_never_reserve_a_job(config, payload):
 def test_oversized_body_and_readiness_fail_closed(config):
     with client_for(config) as (client, app):
         assert client.post("/v1/image-jobs", headers={**headers(config), "Content-Type": "application/json"},
-                           content=b" " * 17000).status_code == 413
+                           content=b" " * (4 * 1024**2 + 16385)).status_code == 413
         app.state.worker.ready = False
         assert client.get("/readyz", headers=headers(config)).status_code == 503
         assert client.get("/capabilities", headers=headers(config)).json()["enabled"] is False
