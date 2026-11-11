@@ -22,10 +22,11 @@ checkpoint loading, tokenization, and final PNG encoding normally.
 
 Disjoint pipeline wrappers prevent device mismatches and duplicate model weights.
 Startup verifies BF16 parameter dtype and exact CUDA placement, checks buffers and
-offload hooks, and generates a real 1024×1024/28-step warmup image before readiness.
+offload hooks, and runs both a real 1024×1024/28-step text warmup and a reference-edit
+warmup before readiness. The second warmup edits the first warmup's boat image.
 Authenticated `/readyz` reports model revision, placement, and measured peak GPU
 memory. Warmup consumes no account quota and overwrites a single evidence image at
-`FLUX_DATA_DIR/evidence/warmup.png`. Save that image with project deployment evidence
+`FLUX_DATA_DIR/evidence/warmup.png` and `warmup-edit.png`. Save those images with project deployment evidence
 under `images-in-chat`; customer images must never be committed.
 
 Use Linux x86-64/Python 3.12 and CUDA 12.8 PyTorch wheels. The container pins its
@@ -131,10 +132,28 @@ before a late cancellation wins and remains completed. Cancellation is checked
 before/after encoding, between denoise steps, and before saving; an individual
 long CUDA operation cannot be preempted immediately.
 
-Prompts are nonempty, at most 2,000 UTF-16 characters, with at most 16 KiB JSON.
+Prompts are nonempty, at most 2,000 UTF-16 characters. Text-only requests have at most 16 KiB JSON.
 The actual model-formatted encoder input must also fit 512 tokens; generation
-explicitly fails rather than silently truncating it. Only a prompt is accepted:
-no reference image, custom dimensions, batch size, negative prompt, or model.
+explicitly fails rather than silently truncating it. An edit additionally sends
+one `referenceImage` data URL using PNG or JPEG; raw base64 and remote URLs are
+rejected. References must decode to exactly 1024×1024 pixels, one frame, and at most
+3,145,728 encoded-file bytes. Complete edit JSON is limited to 4,210,688 bytes.
+Other keys, custom dimensions, batch size, negative prompt, and model selection
+are rejected. Fully decoded references are normalized to RGB; transparency is
+composited onto white and metadata is stripped before inference. Reference bytes
+stay in process memory and are discarded on completion, failure, or cancellation;
+there is no reference download endpoint or cloud reference storage.
+
+`capabilities.referenceEditing` and `imageEditing.enabled` become true only after
+both warmups pass; `imageEditing.version` is 1. Clients must check the capability
+and must not silently drop a reference when connected to an older backend.
+The owner/key fingerprint includes the prompt and SHA256 of the base64-decoded
+PNG/JPEG file bytes. Changing a reference with the same key returns 409; different
+file encodings or metadata count as different inputs. Jobs add `kind: "text" |
+"edit"` without exposing their reference contents.
+
+Reference pixels follow the existing GPU 0 VAE/DiT path. Prompt encoding stays on
+GPU 1 and caption upsampling remains disabled; the 512-token text limit is unchanged.
 One image is 1024×1024 RGB PNG, 28 steps, guidance 4, at most 4 MiB. A random seed
 is assigned once. Reusing owner/key/prompt returns the same job while this process
 retains it; a different prompt with the same key returns 409. The frontend uses
@@ -154,6 +173,14 @@ Prompts are deleted on terminal transition. Orphan outputs from restart are
 removed by file age, without restoring ownership. Kiddo Chat stores downloaded
 images in account-scoped IndexedDB until conversation deletion/site-data clearing.
 Cloud history holds metadata/placeholders only, never generated image files.
+
+Protected readiness exposes the latest per-generation CUDA `memory` snapshot and
+`memoryContext: {kind,outcome,capturedAt}`. Every generation synchronizes CUDA,
+resets peak statistics, then captures allocated/reserved/peak/total bytes for both
+GPUs in a `finally` block, including failure and cancellation. `warmupMemory.text`
+and `.edit` retain startup baselines. Terminal owned job envelopes add the matching
+`generationMemory: {kind,outcome,capturedAt,gpus}` when GPU execution began. These
+diagnostics contain no prompts or reference bytes.
 
 ## Monitoring, tests, and deployment
 

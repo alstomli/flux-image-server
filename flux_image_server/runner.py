@@ -4,9 +4,11 @@ import gc
 import os
 import json
 import time
+import threading
+from datetime import datetime, timezone
 
 from .config import MODEL_ID, MODEL_REVISION, Config
-from .errors import PromptTooLong
+from .errors import PromptTooLong, Cancelled
 
 
 class FluxRunner:
@@ -16,6 +18,9 @@ class FluxRunner:
         self.placement = {}
         self.phase = "not_started"
         self.memory = {}
+        self.memory_context = {}
+        self.warmup_memory = {}
+        self.memory_lock = threading.Lock()
         self.metrics = None
 
     def load(self):
@@ -44,20 +49,25 @@ class FluxRunner:
         self.pipeline.transformer.to(device="cuda:0", dtype=torch.bfloat16).eval()
         self.pipeline.vae.to(device="cuda:0", dtype=torch.bfloat16).eval()
         self.verify_placement()
-        self.phase = "warmup"
-        for index in range(2):
-            torch.cuda.reset_peak_memory_stats(index)
+        self.phase = "warmup_text"
         warmup = self.config.data_dir / "evidence" / "warmup.png"
         warmup.parent.mkdir(exist_ok=True)
         warmup_start = time.monotonic()
         try:
             self.generate("A small red wooden toy boat on calm blue water.", warmup, 42, lambda _step: None)
             self.verify_placement()
-            for index in range(2):
-                torch.cuda.synchronize(index)
-                self.memory[str(index)] = {"allocatedBytes": torch.cuda.memory_allocated(index),
-                                           "peakAllocatedBytes": torch.cuda.max_memory_allocated(index),
-                                           "peakReservedBytes": torch.cuda.max_memory_reserved(index)}
+            self.warmup_memory["text"] = self.memory
+            self.phase = "warmup_edit"
+            from PIL import Image
+            with Image.open(warmup) as source_image:
+                reference = source_image.convert("RGB")
+            try:
+                self.generate("Change the red toy boat to a bright yellow toy boat while keeping the scene layout.",
+                              warmup.with_name("warmup-edit.png"), 43, lambda _step: None, reference_image=reference)
+                self.verify_placement()
+                self.warmup_memory["edit"] = self.memory
+            finally:
+                reference.close()
             if self.metrics:
                 self.metrics.stage.labels("warmup").observe(time.monotonic() - warmup_start)
         finally:
@@ -93,7 +103,47 @@ class FluxRunner:
             records[name] = {"device": expected, "dtype": "bfloat16", "parameters": sum(p.numel() for p in model.parameters())}
         self.placement = records
 
-    def generate(self, prompt: str, destination: Path, seed: int, progress):
+    def generate(self, prompt: str, destination: Path, seed: int, progress, *, reference_image=None):
+        import torch
+        outcome = "failed"
+        try:
+            for index in range(2):
+                torch.cuda.synchronize(index)
+                torch.cuda.reset_peak_memory_stats(index)
+            self._generate(prompt, destination, seed, progress, reference_image=reference_image)
+            outcome = "completed"
+        except Cancelled:
+            outcome = "cancelled"
+            raise
+        finally:
+            memory = {}
+            for index in range(2):
+                item = {}
+                try:
+                    torch.cuda.synchronize(index)
+                except Exception as error:
+                    item["synchronizeErrorClass"] = type(error).__name__
+                try:
+                    item.update(allocatedBytes=torch.cuda.memory_allocated(index),
+                                reservedBytes=torch.cuda.memory_reserved(index),
+                                peakAllocatedBytes=torch.cuda.max_memory_allocated(index),
+                                peakReservedBytes=torch.cuda.max_memory_reserved(index),
+                                totalBytes=torch.cuda.get_device_properties(index).total_memory)
+                except Exception as error:
+                    item["captureErrorClass"] = type(error).__name__
+                memory[str(index)] = item
+            # Publish a complete immutable snapshot after CUDA synchronization.
+            context = {"kind": "edit" if reference_image is not None else "text", "outcome": outcome,
+                       "capturedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+            with self.memory_lock:
+                self.memory = memory
+                self.memory_context = context
+
+    def memory_snapshot(self):
+        with self.memory_lock:
+            return {**self.memory_context, "gpus": self.memory}
+
+    def _generate(self, prompt: str, destination: Path, seed: int, progress, *, reference_image=None):
         import torch
         from diffusers.pipelines.flux2.pipeline_flux2 import format_input
         config = self.config
@@ -125,11 +175,12 @@ class FluxRunner:
                     denoise_end = time.monotonic()
                 return callback_kwargs
             image = self.pipeline(
-                prompt_embeds=embeds, height=config.height, width=config.width,
+                prompt_embeds=embeds, image=reference_image, height=config.height, width=config.width,
                 num_inference_steps=config.steps, guidance_scale=config.guidance,
                 num_images_per_prompt=1, max_sequence_length=512,
                 generator=torch.Generator(device="cuda:0").manual_seed(seed),
                 callback_on_step_end=step_end,
+                caption_upsample_temperature=None,
             ).images[0]
             torch.cuda.synchronize(0)
             if self.metrics and denoise_end is not None:

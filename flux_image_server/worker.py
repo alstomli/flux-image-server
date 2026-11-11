@@ -85,9 +85,15 @@ class Worker:
             if time.monotonic() - started >= config.generation_timeout:
                 raise GenerationTimeout()
         status, error = "completed", None
+        reference_image = None
+        ran_generation = False
         try:
             progress(0)
-            self.runner.generate(job["prompt"], self.store.image_path(job["id"]), job["seed"], progress)
+            if job.get("reference"):
+                reference_image = job["reference"].open_rgb()
+            ran_generation = True
+            self.runner.generate(job["prompt"], self.store.image_path(job["id"]), job["seed"], progress,
+                                 reference_image=reference_image)
         except Cancelled:
             status = "cancelled"
         except PromptTooLong:
@@ -105,6 +111,11 @@ class Worker:
             except Exception:
                 self.ready = False
                 self.metrics.ready.set(0)
-        self.store.finish(job["id"], status, error)
+        finally:
+            if reference_image is not None:
+                reference_image.close()
+            job["reference"] = None
+        snapshot = self.runner.memory_snapshot() if ran_generation and hasattr(self.runner, "memory_snapshot") else None
+        self.store.finish(job["id"], status, error, generation_memory=snapshot)
         elapsed = time.monotonic() - started
         self.metrics.generation.observe(elapsed)

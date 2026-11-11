@@ -13,7 +13,7 @@ class FakeRunner:
     def load(self):
         pass
 
-    def generate(self, prompt, destination, seed, progress):
+    def generate(self, prompt, destination, seed, progress, *, reference_image=None):
         progress(0)
         if self.action:
             self.action()
