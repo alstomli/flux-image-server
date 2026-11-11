@@ -1,0 +1,67 @@
+name: Mirror verified runtimes to Docker Hub
+on:
+  push:
+    branches: [feat/dockerhub-publishing]
+  workflow_dispatch:
+    inputs:
+      artifact:
+        description: Fixed verified runtime to mirror (existing matching tags are verified without overwrite)
+        required: true
+        type: choice
+        default: both
+        options: [both, deployed-reference, prior-runtime]
+permissions:
+  contents: read
+concurrency:
+  group: flux-registry-migration
+  cancel-in-progress: false
+jobs:
+  preflight:
+    if: github.event_name == 'push' && github.repository == 'alstomli/flux-image-server'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Verify public target without publishing
+        run: python scripts/registry_images.py require-unused "migration-preflight-$GITHUB_SHA"
+      - name: Explain manual copy gate
+        run: echo 'Registry-copy workflow is prepared. Dispatch it explicitly after DOCKER_USERNAME and DOCKER_PASSWORD are configured; this push does not copy or deploy an image.' >> "$GITHUB_STEP_SUMMARY"
+  mirror:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'alstomli/flux-image-server' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/dockerhub-publishing')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Require Docker Hub publishing credentials
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]] || { echo 'Set DOCKER_USERNAME and DOCKER_PASSWORD in this repository Actions secrets.' >&2; exit 1; }
+      - name: Install checksum-verified official crane
+        run: |
+          python scripts/install_crane.py "$RUNNER_TEMP/flux-tools"
+          echo "$RUNNER_TEMP/flux-tools" >> "$GITHUB_PATH"
+      - name: Log in only to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Copy exact verified content and verify anonymous pull
+        env:
+          ARTIFACT: ${{ inputs.artifact || 'both' }}
+        run: python scripts/registry_images.py mirror "$ARTIFACT" --evidence-dir "$RUNNER_TEMP/flux-registry-evidence"
+      - name: Record detailed content verification
+        run: |
+          for evidence in "$RUNNER_TEMP/flux-registry-evidence/"*.json; do
+            echo '<details><summary>Verified registry content</summary>' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$evidence" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+          done

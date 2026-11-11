@@ -217,10 +217,20 @@ in Prometheus/Grafana. Record checkpoint revision and image digest. Restore a
 previously verified immutable digest to roll back, understanding that a restart
 resets temporary jobs and quotas.
 
-Candidate CI publishes commit-addressed GHCR images only from the exact trusted
+Candidate CI publishes commit-addressed Docker Hub images only from the exact trusted
 feature branch. Manual versioned release CI runs only on main and refuses to
 overwrite tags. Neither workflow merges a PR, loads weights, or deploys a pod.
 Deploy by digest after live verification.
+
+Publishing now targets the public repository
+[`zihan000/flux-inference`](https://hub.docker.com/r/zihan000/flux-inference), while
+the source repository remains `alstomli/flux-image-server`. Candidate/release
+workflows use repository Actions secrets `DOCKER_USERNAME` and `DOCKER_PASSWORD`
+(a Docker Hub write token), matching the existing Qwen convention. They do not
+borrow secrets from another repository or use model/service credentials during
+builds. Existing GHCR images remain available for rollback/history; future
+publishing writes Docker Hub only. Migration tooling and exact verification steps
+are in [Docker Hub migration](docs/dockerhub-migration.md).
 
 The reference-editing candidate uses `Dockerfile.incremental` because two hosted
 BuildKit attempts could not resolve the Ubuntu apt hosts. Its base is the deployed,
@@ -231,6 +241,9 @@ the complete current application tree at `/app`; source provenance is still the
 candidate commit label. The ordinary pinned `Dockerfile` remains unchanged for
 independent full builds and dependency updates. This branch-specific packaging
 fallback must not be reused if dependency versions change or old modules are deleted.
+Its base now uses the independently verified Docker Hub mirror of that exact
+runtime. Candidate builds require the reviewed digest and anonymously verify its
+digest and amd64 platform using Docker Hub only; GHCR is not a build dependency.
 
 References: [Diffusers FLUX.2](https://huggingface.co/docs/diffusers/en/api/pipelines/flux2),
 [pinned pipeline source](https://github.com/huggingface/diffusers/blob/v0.42.1/src/diffusers/pipelines/flux2/pipeline_flux2.py),
