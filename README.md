@@ -92,6 +92,11 @@ a second process. The HTTP API remains responsive during model loading. `/health
 reports process liveness; authenticated `/readyz` gates real traffic. Graceful
 shutdown requests cooperative cancellation. A hard stop loses status and quota
 records, and never retries the interrupted image automatically.
+Both HTTP ports are reserved before CUDA loading begins. When bootstrapping inside
+the vendor RunPod PyTorch image, its bundled nginx may already own 8001 and proxy
+to 8000; use `PORT=8000` there. The standalone service image has no nginx and uses
+8001 directly. A graceful stop during native checkpoint loading waits for that
+operation to finish; terminate the process explicitly if an immediate stop is needed.
 
 ## API version 1
 

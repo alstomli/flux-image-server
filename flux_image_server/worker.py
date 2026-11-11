@@ -20,7 +20,9 @@ class Worker:
         runner.metrics = metrics
 
     def start(self):
-        self.thread = threading.Thread(target=self.run, name="flux-worker", daemon=True)
+        # Python must not tear down native model-loading threads after a listener
+        # failure or a graceful stop. A hard process kill still needs no recovery.
+        self.thread = threading.Thread(target=self.run, name="flux-worker", daemon=False)
         self.thread.start()
 
     def shutdown(self):
@@ -40,6 +42,8 @@ class Worker:
             load_started = time.monotonic()
             self.runner.load()
             self.metrics.stage.labels("load").observe(time.monotonic() - load_started)
+            if self.stop.is_set():
+                return
             self.ready = True
             self.metrics.ready.set(1)
         except Exception as error:
