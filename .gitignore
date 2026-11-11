@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.env.*
+!.env.example
+.secrets/
+data/
+*.sqlite*
+*.png
+*.safetensors
+*.log
+*.egg-info/
