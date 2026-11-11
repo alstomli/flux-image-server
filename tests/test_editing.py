@@ -64,3 +64,18 @@ def test_edit_api_capabilities_validation_and_private_reference(config):
         app.state.worker.ready = False
         capability = client.get("/capabilities", headers=headers(config)).json()
         assert capability["referenceEditing"] is False and capability["imageEditing"]["enabled"] is False
+
+
+def test_readiness_uses_one_atomic_memory_snapshot(config):
+    with client_for(config) as (client, app):
+        app.state.worker.runner.memory = {"stale": True}
+        app.state.worker.runner.memory_context = {"kind": "wrong"}
+        calls = []
+        def snapshot():
+            calls.append(True)
+            return {"kind": "edit", "outcome": "completed", "gpus": {"0": {"peakAllocatedBytes": 123}}}
+        app.state.worker.runner.memory_snapshot = snapshot
+        result = client.get("/readyz", headers=headers(config)).json()
+        assert calls == [True]
+        assert result["memory"] == {"0": {"peakAllocatedBytes": 123}}
+        assert result["memoryContext"] == {"kind": "edit", "outcome": "completed"}

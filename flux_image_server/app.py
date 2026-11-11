@@ -83,11 +83,14 @@ def create_app(config: Config | None = None, *, runner=None, start_worker=True):
     @app.get("/readyz")
     def ready():
         available = worker.accepting()
+        capture = getattr(worker.runner, "memory_snapshot", None)
+        snapshot = capture() if callable(capture) else {
+            **getattr(worker.runner, "memory_context", {}), "gpus": getattr(worker.runner, "memory", {})}
         return JSONResponse({"ready": available, "model": MODEL_ID, "revision": MODEL_REVISION,
                              "dtype": "bfloat16", "offloading": False,
                              "placement": getattr(worker.runner, "placement", {}),
-                             "memory": getattr(worker.runner, "memory", {}),
-                             "memoryContext": getattr(worker.runner, "memory_context", {}),
+                             "memory": snapshot.get("gpus", {}),
+                             "memoryContext": {key: value for key, value in snapshot.items() if key != "gpus"},
                              "warmupMemory": getattr(worker.runner, "warmup_memory", {}),
                              "phase": getattr(worker.runner, "phase", "load"), "errorClass": worker.error_class,
                              "state": "failed" if worker.loading_error else "ready" if available else "loading_or_unavailable"},
