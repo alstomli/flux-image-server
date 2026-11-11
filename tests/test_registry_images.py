@@ -103,11 +103,30 @@ def test_existing_mismatched_tag_is_never_overwritten(registry, content, monkeyp
         registry.mirror("deployed-reference", tmp_path)
 
 
-def test_unverified_incremental_base_is_rejected(registry, tmp_path):
+@pytest.mark.parametrize("reference", ["zihan000/flux-inference:latest",
+    "docker.io/zihan000/flux-inference@sha256:" + "f" * 64,
+    "ghcr.io/alstomli/flux-image-server@sha256:eb90674d975df24ab14732f49a86bb59777d4b5c3e1f13273eb9c980916d0585"])
+def test_unverified_incremental_base_is_rejected(registry, tmp_path, reference):
     dockerfile = tmp_path / "Dockerfile"
-    dockerfile.write_text("FROM zihan000/flux-inference:latest\n")
+    dockerfile.write_text("FROM " + reference + "\n")
     with pytest.raises(registry.RegistryError):
         registry.verify_runtime_base(dockerfile)
+
+
+def test_verified_incremental_base_only_contacts_dockerhub_anonymously(registry, monkeypatch, tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM " + registry.VERIFIED_RUNTIME_BASE + "\n")
+    calls = []
+    monkeypatch.setattr(registry, "require_public_repo", lambda: calls.append("public-target"))
+    def inspect(reference, *, anonymous):
+        assert reference == registry.VERIFIED_RUNTIME_BASE
+        assert reference.startswith("docker.io/") and anonymous is True
+        calls.append(reference)
+        return reference.split("@", 1)[1]
+    monkeypatch.setattr(registry, "digest", inspect)
+    monkeypatch.setattr(registry, "image", inspect)
+    registry.verify_runtime_base(dockerfile)
+    assert calls == ["public-target", registry.VERIFIED_RUNTIME_BASE, registry.VERIFIED_RUNTIME_BASE]
 
 
 def test_index_verification_preserves_platforms_and_attestations(registry):

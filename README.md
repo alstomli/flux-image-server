@@ -241,9 +241,9 @@ the complete current application tree at `/app`; source provenance is still the
 candidate commit label. The ordinary pinned `Dockerfile` remains unchanged for
 independent full builds and dependency updates. This branch-specific packaging
 fallback must not be reused if dependency versions change or old modules are deleted.
-Its GHCR base pin stays unchanged until the prior-runtime Docker Hub mirror is
-independently verified. A later base-pin change must name that verified digest;
-candidate builds recheck its full amd64 runtime content before building.
+Its base now uses the independently verified Docker Hub mirror of that exact
+runtime. Candidate builds require the reviewed digest and anonymously verify its
+digest and amd64 platform using Docker Hub only; GHCR is not a build dependency.
 
 References: [Diffusers FLUX.2](https://huggingface.co/docs/diffusers/en/api/pipelines/flux2),
 [pinned pipeline source](https://github.com/huggingface/diffusers/blob/v0.42.1/src/diffusers/pipelines/flux2/pipeline_flux2.py),

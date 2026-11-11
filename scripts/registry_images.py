@@ -17,6 +17,9 @@ from urllib.request import Request, urlopen
 
 DOCKERHUB_REPO = "zihan000/flux-inference"
 DESTINATION = "docker.io/" + DOCKERHUB_REPO
+# Independently verified mirror: index, every child, config, layers and rootfs.
+# Future builds trust this immutable pin without contacting the bootstrap registry.
+VERIFIED_RUNTIME_BASE = DESTINATION + "@sha256:eb90674d975df24ab14732f49a86bb59777d4b5c3e1f13273eb9c980916d0585"
 GHCR_REPO = "ghcr.io/alstomli/flux-image-server"
 MIRRORS = {
     "deployed-reference": {
@@ -182,17 +185,13 @@ def verify_runtime_base(dockerfile):
     if len(lines) != 1:
         raise RegistryError("Expected one explicitly pinned incremental runtime base")
     reference = lines[0].split()[1]
-    expected_source = MIRRORS["prior-runtime"]["source"]
-    if reference == expected_source:
-        print("Incremental base remains the verified GHCR digest until its Docker Hub mirror is confirmed")
-        return
-    if not re.fullmatch(re.escape(DESTINATION) + r"@sha256:[0-9a-f]{64}", reference):
+    if reference != VERIFIED_RUNTIME_BASE:
         raise RegistryError("Incremental base must use the verified immutable Docker Hub runtime mirror")
     require_public_repo()
     if digest(reference, anonymous=True) != reference.split("@", 1)[1]:
         raise RegistryError("Incremental Docker Hub base digest mismatch")
-    compare_images(*image(expected_source, anonymous=True), *image(reference, anonymous=True))
-    print("Incremental Docker Hub runtime mirror content and anonymous pull verified")
+    image(reference, anonymous=True)
+    print("Pinned Docker Hub runtime digest, linux/amd64 platform and anonymous pull verified")
 
 
 def main():

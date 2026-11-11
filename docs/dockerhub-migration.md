@@ -61,11 +61,14 @@ Actions summary with the exact destination deployment reference. Environment
 values and credentials are omitted from evidence; only environment names and a
 runtime configuration hash are recorded.
 
-The operator independently checks the destination digest and evidence before
-changing `Dockerfile.incremental` to the mirrored prior-runtime digest, or changing
-the RunPod image to the mirrored deployed-image digest. The candidate workflow
-then verifies that the Docker Hub incremental base still matches the known runtime
-before a source-only build. The ordinary pinned `Dockerfile` is preserved.
+Independent anonymous verification confirmed both mirrors retain their exact
+source index digests and all children, configs, ordered layers, and rootfs content.
+`Dockerfile.incremental` now pins the Docker Hub prior-runtime digest above.
+Candidate builds require this exact reviewed pin, verify its anonymous digest and
+`linux/amd64` platform using Docker Hub only, and do not contact GHCR. GHCR access
+is confined to the explicit bootstrap mirror operation and rollback history.
+The ordinary pinned `Dockerfile` is preserved. Changing the RunPod image to the
+mirrored deployed-image digest remains a separate operator action.
 
 The repository does not claim Docker Hub deployment merely because a workflow or
 PR exists. Publication requires successful copy/build and anonymous verification;
