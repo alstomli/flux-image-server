@@ -116,6 +116,9 @@ class Worker:
                 reference_image.close()
             job["reference"] = None
         snapshot = self.runner.memory_snapshot() if ran_generation and hasattr(self.runner, "memory_snapshot") else None
+        if snapshot is not None and snapshot.get("placementVerified") is False:
+            self.ready = False
+            self.metrics.ready.set(0)
         self.store.finish(job["id"], status, error, generation_memory=snapshot)
         elapsed = time.monotonic() - started
         self.metrics.generation.observe(elapsed)

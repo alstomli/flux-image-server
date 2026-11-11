@@ -181,6 +181,9 @@ GPUs in a `finally` block, including failure and cancellation. `warmupMemory.tex
 and `.edit` retain startup baselines. Terminal owned job envelopes add the matching
 `generationMemory: {kind,outcome,capturedAt,gpus}` when GPU execution began. These
 diagnostics contain no prompts or reference bytes.
+`placementVerified` reports a fresh CUDA/BF16 parameter and buffer check on every
+success, failure, and cancellation; a failed check makes the worker unready.
+Cancellation before GPU execution attaches no stale diagnostic snapshot.
 
 ## Monitoring, tests, and deployment
 

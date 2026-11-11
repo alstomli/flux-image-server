@@ -106,16 +106,26 @@ class FluxRunner:
     def generate(self, prompt: str, destination: Path, seed: int, progress, *, reference_image=None):
         import torch
         outcome = "failed"
+        active_failure = None
         try:
             for index in range(2):
                 torch.cuda.synchronize(index)
                 torch.cuda.reset_peak_memory_stats(index)
             self._generate(prompt, destination, seed, progress, reference_image=reference_image)
             outcome = "completed"
-        except Cancelled:
-            outcome = "cancelled"
+        except BaseException as error:
+            active_failure = error
+            if isinstance(error, Cancelled):
+                outcome = "cancelled"
             raise
         finally:
+            placement_error = None
+            try:
+                self.verify_placement()
+            except Exception as error:
+                placement_error = error
+                if active_failure is None:
+                    outcome = "failed"
             memory = {}
             for index in range(2):
                 item = {}
@@ -134,10 +144,15 @@ class FluxRunner:
                 memory[str(index)] = item
             # Publish a complete immutable snapshot after CUDA synchronization.
             context = {"kind": "edit" if reference_image is not None else "text", "outcome": outcome,
-                       "capturedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+                       "capturedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                       "placementVerified": placement_error is None}
+            if placement_error is not None:
+                context["placementErrorClass"] = type(placement_error).__name__
             with self.memory_lock:
                 self.memory = memory
                 self.memory_context = context
+            if placement_error is not None and active_failure is None:
+                raise RuntimeError("Model CUDA/BF16 placement verification failed") from placement_error
 
     def memory_snapshot(self):
         with self.memory_lock:
@@ -206,8 +221,6 @@ class FluxRunner:
                         os.close(directory)
             finally:
                 temporary.unlink(missing_ok=True)
-        self.verify_placement()
-
     def recover_error(self):
         import torch
         gc.collect()

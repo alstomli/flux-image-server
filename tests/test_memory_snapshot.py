@@ -19,14 +19,18 @@ def test_each_generation_resets_peaks_and_publishes_memory_on_all_outcomes(confi
         if failure:
             raise failure
     monkeypatch.setattr(runner, "_generate", generate)
+    verified = []
+    monkeypatch.setattr(runner, "verify_placement", lambda: verified.append(True))
     if failure:
         with pytest.raises(type(failure)):
             runner.generate("private prompt", config.data_dir / "test.png", 1, lambda _: None, reference_image=object())
     else:
         runner.generate("private prompt", config.data_dir / "test.png", 1, lambda _: None, reference_image=object())
     assert resets == [0, 1]
+    assert verified == [True]
     snapshot = runner.memory_snapshot()
     assert snapshot["kind"] == "edit" and snapshot["capturedAt"].endswith("Z")
     assert snapshot["outcome"] == ("completed" if failure is None else "cancelled" if isinstance(failure, Cancelled) else "failed")
     assert snapshot["gpus"]["1"]["peakAllocatedBytes"] == 301
+    assert snapshot["placementVerified"] is True
     assert "private" not in str(snapshot)

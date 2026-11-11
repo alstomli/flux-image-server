@@ -79,3 +79,16 @@ def test_readiness_uses_one_atomic_memory_snapshot(config):
         assert calls == [True]
         assert result["memory"] == {"0": {"peakAllocatedBytes": 123}}
         assert result["memoryContext"] == {"kind": "edit", "outcome": "completed"}
+
+
+def test_precancel_does_not_attach_previous_generation_memory(store):
+    job = store.submit(OWNER, "one", "Change color", True, reference=validate_reference(image_url()))
+    claimed = store.claim()
+    store.cancel(OWNER, job["id"])
+    class PreviousMemoryRunner(FakeRunner):
+        def memory_snapshot(self):
+            raise AssertionError("A cancelled-before-start job must not read stale GPU memory")
+    Worker(store, PreviousMemoryRunner(), Metrics(store)).execute(claimed)
+    result = store.owned(OWNER, job["id"])
+    assert result["status"] == "cancelled" and result["reference"] is None
+    assert "generationMemory" not in envelope(result, store.config)
