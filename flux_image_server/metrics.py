@@ -1,13 +1,16 @@
 import csv
 import io
+import math
 import shutil
 import subprocess
+import threading
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 
 class Metrics:
     def __init__(self, store):
         self.store = store
+        self.render_lock = threading.Lock()
         self.registry = CollectorRegistry()
         def gauge(name, help, labels=()):
             return Gauge("flux2_" + name, help, labels, registry=self.registry)
@@ -39,6 +42,10 @@ class Metrics:
             self.failed.labels(reason).inc()
 
     def render(self):
+        with self.render_lock:
+            return self._render()
+
+    def _render(self):
         counts, _oldest = self.store.snapshot()
         for status in ("generating", "completed", "failed", "cancelled", "expired"):
             self.jobs.labels("running" if status == "generating" else status).set(counts.get(status, 0))
@@ -49,11 +56,23 @@ class Metrics:
             fields = "index,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
             output = subprocess.run(["nvidia-smi", "--query-gpu=" + fields, "--format=csv,noheader,nounits"],
                                     check=True, capture_output=True, text=True, timeout=5).stdout
-            for row in csv.reader(io.StringIO(output)):
+            rows = list(csv.reader(io.StringIO(output)))
+            if len(rows) != 2 or any(len(row) != 6 for row in rows):
+                raise ValueError("Expected two complete GPU telemetry rows")
+            samples = []
+            indices = set()
+            for row in rows:
                 index = str(int(row[0]))
+                if index in indices:
+                    raise ValueError("Duplicate GPU telemetry index")
+                indices.add(index)
                 for (name, metric), value in zip(self.gpu.items(), row[1:]):
                     number = float(value.strip())
-                    metric.labels(index).set(number * 1024**2 if "memory" in name else number)
+                    if not math.isfinite(number) or number < 0:
+                        raise ValueError("Invalid GPU telemetry value")
+                    samples.append((metric, index, number * 1024**2 if "memory" in name else number))
+            for metric, index, number in samples:
+                metric.labels(index).set(number)
             self.gpu_up.set(1)
         except (OSError, ValueError, subprocess.SubprocessError):
             self.gpu_up.set(0)
