@@ -106,7 +106,7 @@ class FluxRunner:
     def generate(self, prompt: str, destination: Path, seed: int, progress, *, reference_image=None):
         import torch
         outcome = "failed"
-        active_failure = None
+        had_failure = False
         try:
             for index in range(2):
                 torch.cuda.synchronize(index)
@@ -114,7 +114,7 @@ class FluxRunner:
             self._generate(prompt, destination, seed, progress, reference_image=reference_image)
             outcome = "completed"
         except BaseException as error:
-            active_failure = error
+            had_failure = True
             if isinstance(error, Cancelled):
                 outcome = "cancelled"
             raise
@@ -124,7 +124,7 @@ class FluxRunner:
                 self.verify_placement()
             except Exception as error:
                 placement_error = error
-                if active_failure is None:
+                if not had_failure:
                     outcome = "failed"
             memory = {}
             for index in range(2):
@@ -151,7 +151,7 @@ class FluxRunner:
             with self.memory_lock:
                 self.memory = memory
                 self.memory_context = context
-            if placement_error is not None and active_failure is None:
+            if placement_error is not None and not had_failure:
                 raise RuntimeError("Model CUDA/BF16 placement verification failed") from placement_error
 
     def memory_snapshot(self):

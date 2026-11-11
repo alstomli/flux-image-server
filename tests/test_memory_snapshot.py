@@ -1,4 +1,5 @@
 import sys
+import weakref
 from types import SimpleNamespace
 import pytest
 
@@ -34,3 +35,26 @@ def test_each_generation_resets_peaks_and_publishes_memory_on_all_outcomes(confi
     assert snapshot["gpus"]["1"]["peakAllocatedBytes"] == 301
     assert snapshot["placementVerified"] is True
     assert "private" not in str(snapshot)
+
+
+def test_cancelled_generation_does_not_retain_transient_traceback_frames(config, monkeypatch):
+    cuda = SimpleNamespace(synchronize=lambda _: None, reset_peak_memory_stats=lambda _: None,
+        memory_allocated=lambda _: 1, memory_reserved=lambda _: 1,
+        max_memory_allocated=lambda _: 1, max_memory_reserved=lambda _: 1,
+        get_device_properties=lambda _: SimpleNamespace(total_memory=100))
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=cuda))
+    runner = FluxRunner(config)
+    monkeypatch.setattr(runner, "verify_placement", lambda: None)
+    references = []
+    class Transient:
+        pass
+    def cancelled(*_args, **_kwargs):
+        transient = Transient()
+        references.append(weakref.ref(transient))
+        raise Cancelled()
+    monkeypatch.setattr(runner, "_generate", cancelled)
+    try:
+        runner.generate("edit", config.data_dir / "unused.png", 1, lambda _: None)
+    except Cancelled:
+        pass
+    assert references[0]() is None
