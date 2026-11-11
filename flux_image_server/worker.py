@@ -3,7 +3,7 @@ import shutil
 import threading
 import time
 
-from .errors import Cancelled, GenerationTimeout, PromptTooLong
+from .errors import Cancelled, GenerationTimeout, PromptTooLong, is_oom
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,8 @@ class Worker:
             self.metrics.ready.set(1)
         except Exception as error:
             self.loading_error = True
+            if is_oom(error):
+                self.metrics.oom.inc()
             self.error_class = type(error).__name__
             log.error("Model loading failed: class=%s phase=%s; readiness remains false.",
                       self.error_class, getattr(self.runner, "phase", "load"))
@@ -93,7 +95,9 @@ class Worker:
         except GenerationTimeout:
             status, error = "failed", "timeout"
         except Exception as failure:
-            status, error = "failed", "oom" if type(failure).__name__ == "OutOfMemoryError" else "generation_error"
+            status, error = "failed", "oom" if is_oom(failure) else "generation_error"
+            if error == "oom":
+                self.metrics.oom.inc()
             # Never log a pipeline exception: it may embed the prompt or a credential.
             log.error("Image generation failed; job content omitted.")
             try:

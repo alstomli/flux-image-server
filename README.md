@@ -160,6 +160,8 @@ Cloud history holds metadata/placeholders only, never generated image files.
 FLUX-specific metrics use `flux2_*`: readiness, running/terminal job counts,
 starts/completions/failures/rejections, generation/job duration, free disk, and stage
 timings (`load`, `warmup`, `encode`, `denoise`, `decode`). There are no queue metrics.
+`flux2_oom_total` starts at zero and counts CUDA/host OOM during model loading,
+warmup, and generation, so the first OOM can trigger an alert immediately.
 Shared `gpu_*` and `gpu_exporter_up` names remain compatible with existing dashboards;
 failed refresh clears stale GPU series. Labels are bounded reasons/states/stages
 and GPU indices, without prompt/user/job/credential labels. All counters and

@@ -21,6 +21,7 @@ class Metrics:
         self.ready = gauge("model_ready", "BF16 model loaded and placement verified")
         self.jobs = gauge("jobs", "Current jobs", ("state",))
         self.starts = counter("generation_starts_total", "Generation starts in this process")
+        self.oom = counter("oom_total", "CUDA or host out-of-memory failures during load, warmup, or generation")
         self.completed = counter("jobs_completed_total", "Completed images")
         self.failed = counter("jobs_failed_total", "Failed jobs", ("reason",))
         self.rejected = counter("requests_rejected_total", "Rejected submissions", ("reason",))

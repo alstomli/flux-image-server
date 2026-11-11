@@ -53,4 +53,26 @@ def test_oom_is_classified_without_leaking_exception(store):
     worker = Worker(store, FakeRunner(fail), Metrics(store))
     worker.execute(store.claim())
     assert store.owned(OWNER, job["id"])["error_code"] == "oom"
-    assert b'secret prompt' not in worker.metrics.render()
+    output = worker.metrics.render()
+    assert b'flux2_oom_total 1.0' in output
+    assert b'secret prompt' not in output
+
+
+def test_oom_counter_starts_at_zero_and_counts_load_or_warmup_failure(store):
+    class OutOfMemoryError(Exception):
+        pass
+    class FailedLoad(FakeRunner):
+        phase = "warmup"
+        def load(self):
+            try:
+                raise OutOfMemoryError("private content")
+            except OutOfMemoryError as error:
+                raise RuntimeError("wrapped failure") from error
+    metrics = Metrics(store)
+    assert b'flux2_oom_total 0.0' in metrics.render()
+    worker = Worker(store, FailedLoad(), metrics)
+    worker.run()
+    assert not worker.ready and worker.loading_error
+    output = metrics.render()
+    assert b'flux2_oom_total 1.0' in output
+    assert b'private content' not in output

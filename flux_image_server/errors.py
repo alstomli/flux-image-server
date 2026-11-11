@@ -14,3 +14,17 @@ class GenerationTimeout(Exception):
 
 class PromptTooLong(Exception):
     pass
+
+
+def is_oom(error):
+    """Classify native CUDA/host OOM, including wrapping, without reading messages."""
+    pending, visited = [error], set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        if isinstance(current, MemoryError) or type(current).__name__ == "OutOfMemoryError":
+            return True
+        pending.extend(e for e in (current.__cause__, current.__context__) if e is not None)
+    return False
