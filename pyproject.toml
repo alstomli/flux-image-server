@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flux-image-server"
+version = "0.1.0"
+description = "Private, account-scoped FLUX.2-dev image jobs on two GPUs"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.162.4", "uvicorn==0.54.0", "pydantic==2.14.3",
+  "prometheus-client==0.26.0", "Pillow==13.0.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0", "httpx==0.28.1"]
+gpu = [
+  "torch==2.9.1", "torchvision==0.24.1", "diffusers==0.42.1", "transformers==5.22.2",
+  "accelerate==1.15.0", "huggingface-hub==2.4.0", "safetensors==0.8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["flux_image_server*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
