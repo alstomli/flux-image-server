@@ -58,6 +58,7 @@ Use restrictive secret files or RunPod secret variables. Never commit tokens,
 `.env`, images, databases, or weights. Never use a RunPod account key as the image
 service token. The Hugging Face account must accept the
 [model access conditions](https://huggingface.co/black-forest-labs/FLUX.2-dev).
+Startup rejects equal API/metrics credentials, including values read from files.
 
 ## Prepare and start
 

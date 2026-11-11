@@ -30,6 +30,12 @@ class Config:
     guidance: float = 4.0
     max_prompt_length: int = 2000
 
+    def __post_init__(self):
+        if len(self.api_token) < 32 or len(self.metrics_token) < 32:
+            raise ValueError("API and metrics tokens must each contain at least 32 characters")
+        if self.api_token == self.metrics_token:
+            raise ValueError("API and metrics tokens must be distinct")
+
     @classmethod
     def from_env(cls):
         return cls(
