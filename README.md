@@ -74,6 +74,10 @@ python3 -m venv /opt/flux-venv
 The fetch command writes a revision manifest; startup rejects a mismatched local
 manifest. Runtime model loading is local-files-only. CI and container builds need
 no model access credentials. Never pass an HF token as a Docker build argument.
+The downloader stages one shard at a time in local temporary storage, checks its
+published SHA256, and whole-copies it to the model volume. Hugging Face cache locks
+stay local. `FLUX_DOWNLOAD_STAGE` and `FLUX_DOWNLOAD_STATE` can select local staging
+and resume-marker directories; leave at least 12 GB local staging space available.
 
 ```sh
 docker buildx build --platform linux/amd64 -t flux-image-server:local --load .
