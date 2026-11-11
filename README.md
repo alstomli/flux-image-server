@@ -222,6 +222,16 @@ feature branch. Manual versioned release CI runs only on main and refuses to
 overwrite tags. Neither workflow merges a PR, loads weights, or deploys a pod.
 Deploy by digest after live verification.
 
+The reference-editing candidate uses `Dockerfile.incremental` because two hosted
+BuildKit attempts could not resolve the Ubuntu apt hosts. Its base is the deployed,
+GPU-verified immutable image `sha256:eb90674d975df24ab14732f49a86bb59777d4b5c3e1f13273eb9c980916d0585`
+(source commit `e8f51cd`). It copies updated app/scripts only, without apt, pip,
+networked build steps, dependency changes, or source deletions. Python executes
+the complete current application tree at `/app`; source provenance is still the
+candidate commit label. The ordinary pinned `Dockerfile` remains unchanged for
+independent full builds and dependency updates. This branch-specific packaging
+fallback must not be reused if dependency versions change or old modules are deleted.
+
 References: [Diffusers FLUX.2](https://huggingface.co/docs/diffusers/en/api/pipelines/flux2),
 [pinned pipeline source](https://github.com/huggingface/diffusers/blob/v0.42.1/src/diffusers/pipelines/flux2/pipeline_flux2.py),
 [architecture decision](docs/adr-001-image-jobs.md).

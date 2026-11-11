@@ -38,6 +38,7 @@ jobs:
         id: build
         with:
           context: .
+          file: ${{ github.ref_name == 'feat/reference-image-editing' && 'Dockerfile.incremental' || 'Dockerfile' }}
           platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
